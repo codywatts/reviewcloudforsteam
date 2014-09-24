@@ -1,18 +1,18 @@
 // ==UserScript==
-// @name         ReviewCloud for Steam
-// @author       Cody Watts
-// @namespace    http://www.codywatts.com/reviewcloudforsteam
-// @homepage     http://www.codywatts.com/reviewcloudforsteam
-// @updateURL    https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.meta.js
-// @downloadURL  https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.user.js
-// @version      1.0.0
-// @description  This user script generates word clouds from the user reviews on Steam.
-// @match        http://store.steampowered.com/app/*
-// @match        https://store.steampowered.com/app/*
-// @require      http://code.jquery.com/jquery-2.1.1.js
-// @grant        GM_addStyle
-// @grant        GM_xmlhttpRequest
-// @copyright    2014+, Cody Watts
+// @name		ReviewCloud for Steam
+// @author		Cody Watts
+// @namespace	http://www.codywatts.com/reviewcloudforsteam
+// @homepage	http://www.codywatts.com/reviewcloudforsteam
+// @updateURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.meta.js
+// @downloadURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.user.js
+// @version		1.0.1
+// @description	This user script generates word clouds from the user reviews on Steam.
+// @match		http://store.steampowered.com/app/*
+// @match		https://store.steampowered.com/app/*
+// @require		http://code.jquery.com/jquery-2.1.1.js
+// @grant		GM_addStyle
+// @grant		GM_xmlhttpRequest
+// @copyright	2014+, Cody Watts
 // ==/UserScript==
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -109,7 +109,7 @@ function appHasReviews()
 ////////////////////////////////////////////////////////////////////////////////
 function createReviewCloudContainer()
 {
-	var mainContentElement = document.getElementById("main_content");
+	var mainContentElement = getMainContentElement();
 	if (mainContentElement == null)
 	{
 		logError("Could not find a page element with id \"main_content\". The ReviewCloud will not be displayed.");
@@ -143,9 +143,27 @@ function createReviewCloudContainer()
 	reviewCloudContainerElement.style.height = REVIEW_CLOUD_HEIGHT + 'px';
 	reviewCloudContainerElement.style.position = 'relative';
 	reviewCloudContainerElement.style.display = 'block';
+    reviewCloudContainerElement.style.minWidth = $('#game_area_description').width() + 'px';
 	reviewCloudHeaderElement.appendChild(reviewCloudContainerElement);
 	
 	return reviewCloudContainerElement;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// getMainContentElement: Returns a reference to the page element which
+// contains the main content.
+//
+////////////////////////////////////////////////////////////////////////////////
+function getMainContentElement()
+{
+	var mainContentElement = document.getElementsByClassName("page_content_ctn");
+	if (mainContentElement == null)
+	{
+		return null;
+	}
+	
+    return mainContentElement[0];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -159,10 +177,9 @@ function showLoadingOverlay()
 	var reviewCloudContainerElement = document.getElementById("review_cloud");
 	
 	var spinnerContainer = document.createElement('div');
-	spinnerContainer.setAttribute("name", "spinner_container"); 
+    spinnerContainer.setAttribute("name", "spinner_container"); 
 	spinnerContainer.setAttribute("id", "spinner_container"); 
 	spinnerContainer.style.color = "rgb(240, 240, 240)";
-	spinnerContainer.style.background = "rgba(0, 0, 0, 0.8)";
 	spinnerContainer.style.position = "absolute";
 	spinnerContainer.style.right = "0";
 	spinnerContainer.style.left = "0";
@@ -186,10 +203,10 @@ function showLoadingOverlay()
 	);
 	
 	var spinner = document.createElement('div');
-	spinner.setAttribute("name", "spinner");
+    spinner.setAttribute("name", "spinner");
 	spinner.setAttribute("id", "spinner");  
 	spinner.style.position = "absolute";
-	spinner.style.margin = "auto auto";
+    spinner.style.margin = "auto auto";
 	spinner.style.right = "0";
 	spinner.style.left = "0";
 	spinner.style.top = "0";
@@ -197,8 +214,8 @@ function showLoadingOverlay()
 	spinnerContainer.appendChild(spinner);
 	
 	var progressText = document.createElement('div');
-	progressText.setAttribute("name", "progress_text"); 
-	progressText.setAttribute("id", "progress_text"); 
+    progressText.setAttribute("name", "progress_text"); 
+    progressText.setAttribute("id", "progress_text"); 
 	progressText.style.fontSize = "36px";
 	progressText.style.color = "rgb(240, 240, 240)";
 	progressText.style.position = "absolute";
@@ -209,8 +226,8 @@ function showLoadingOverlay()
 	progressText.style.textAlign = "center";
 	progressText.style.display = "table-cell";
 	progressText.style.verticalAlign = "middle";
-	progressText.style.lineHeight = REVIEW_CLOUD_HEIGHT + "px";
-	progressText.innerHTML = "Loading...";
+    progressText.style.lineHeight = REVIEW_CLOUD_HEIGHT + "px";
+    progressText.innerHTML = "Loading...";
 	reviewCloudContainerElement.appendChild(progressText);
 }
 
@@ -263,8 +280,8 @@ function logError(string)
 ////////////////////////////////////////////////////////////////////////////////
 function getAppID()
 {
-	// If this function has not yet been run...
-	if (typeof getAppID.appID == 'undefined')
+    // If this function has not yet been run...
+    if (typeof getAppID.appID == 'undefined')
 	{
 		var documentURL = document.location.href;
 		
@@ -278,7 +295,7 @@ function getAppID()
 		{
 			getAppID.appID = appIDRegexResults[1];
 		}
-	}
+    }
 
 	return getAppID.appID;
 }
@@ -290,12 +307,12 @@ function getAppID()
 ////////////////////////////////////////////////////////////////////////////////
 function getAppName()
 {
-	// If this function has not yet been run...
-	if (typeof getAppName.appName == 'undefined')
+    // If this function has not yet been run...
+    if (typeof getAppName.appName == 'undefined')
 	{
 		getAppName.appName = "";
 		
-		var mainContentElement = document.getElementById("main_content");
+		var mainContentElement = getMainContentElement();
 		if (mainContentElement != null)
 		{
 			var appNameDiv = mainContentElement.getElementsByClassName("apphub_AppName");
@@ -309,7 +326,7 @@ function getAppName()
 		{
 			logError("Could not determine the app name.");
 		}
-	}
+    }
 
 	return getAppName.appName;
 }
@@ -321,13 +338,13 @@ function getAppName()
 ////////////////////////////////////////////////////////////////////////////////
 function getAppNameAsRegExp()
 {
-	// If this function has not yet been run...
-	if (typeof getAppNameAsRegExp.regularExpression == 'undefined')
+    // If this function has not yet been run...
+    if (typeof getAppNameAsRegExp.regularExpression == 'undefined')
 	{
 		var uniqueWordsInAppName = getUniqueWords(getAppName().toLowerCase());
 		var pipeDelimitedAppName = Object.keys(uniqueWordsInAppName).join('|');
 		getAppNameAsRegExp.regularExpression = new RegExp('^(' + pipeDelimitedAppName + ')$', 'g');
-	}
+    }
 
 	return getAppNameAsRegExp.regularExpression;
 }
@@ -340,29 +357,29 @@ function getAppNameAsRegExp()
 ////////////////////////////////////////////////////////////////////////////////
 function requestReviewsFromServer(startOffset)
 {
-	var requestURL = "http://store.steampowered.com/appreviews/" + getAppID() + "?start_offset=" + startOffset + "&day_range=" + DAY_RANGE + "&filter=all"
-	logInfo("Requesting reviews starting at offset " + startOffset + " via: " + requestURL);
+    var requestURL = "http://store.steampowered.com/appreviews/" + getAppID() + "?start_offset=" + startOffset + "&day_range=" + DAY_RANGE + "&filter=all"
+    logInfo("Requesting reviews starting at offset " + startOffset + " via: " + requestURL);
 
-	GM_xmlhttpRequest({
-		method: "GET",
-		url: requestURL,
-		onload: function(response)
-		{
+    GM_xmlhttpRequest({
+        method: "GET",
+        url: requestURL,
+        onload: function(response)
+        {
 			onReceivedReviewsFromServer(response);
-		},
+        },
 		onabort: function(response)
-		{
+        {
 			onRequestFailed(response);
-		},
+        },
 		onerror: function(response)
-		{
+        {
 			onRequestFailed(response);
-		},
+        },
 		ontimeout: function(response)
-		{
+        {
 			onRequestFailed(response);
-		}
-	});
+        }
+    });
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -440,8 +457,8 @@ function onAllReviewsReadyForProcessing(response)
 {
 	var wordCounts = {};
 
-	for (var i = 0; i < g_reviews.length; ++i)
-	{
+    for (var i = 0; i < g_reviews.length; ++i)
+    {
 		var review = g_reviews[i];
 
 		// Steam censors swears in reviews by replacing them with hearts, which can ♥♥♥♥ up the analysis. Get rid of any of those.
@@ -458,32 +475,32 @@ function onAllReviewsReadyForProcessing(response)
 
 		var uniqueWordsInThisReview = getUniqueWords(review.text);
 		
-		// Go over the set of unique words in this review and increment their counts in the "wordCounts" array
-		for (var word in uniqueWordsInThisReview)
-		{
-			if (word in wordCounts == false)
-			{
-				wordCounts[word] = {negativeCount: 0, positiveCount: 0};
+        // Go over the set of unique words in this review and increment their counts in the "wordCounts" array
+    	for (var word in uniqueWordsInThisReview)
+    	{
+            if (word in wordCounts == false)
+            {
+                wordCounts[word] = {negativeCount: 0, positiveCount: 0};
+            }
+            
+            if (review.isPositive)
+            {              
+            	wordCounts[word].positiveCount++;
 			}
-			
-			if (review.isPositive)
-			{			  
-				wordCounts[word].positiveCount++;
-			}
-			else
-			{
-				wordCounts[word].negativeCount++;
-			}
-		}
-	}
+            else
+            {
+                wordCounts[word].negativeCount++;
+            }
+        }
+    }
 
-	for (var word in wordCounts)
-	{
+    for (var word in wordCounts)
+    {
 		if (shouldBeFiltered(word))
 		{
 			delete wordCounts[word];
 		}
-	}
+    }
 	
 	consolidateSimilarWords(wordCounts);
 	
@@ -514,10 +531,10 @@ function consolidateSimilarWords(wordCounts)
 	]
 			
 	for (var word in wordCounts)
-	{
+    {
 		// If the word ends with 's'...
 		if (/s$/.test(word))
-		{
+        {
 			var pluralForm = word;
 						
 			var foundSingularForm = false;
@@ -561,8 +578,8 @@ function consolidateSimilarWords(wordCounts)
 					}
 				}
 			}
-		}
-	}
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -589,11 +606,11 @@ function stripURLs(string)
 ////////////////////////////////////////////////////////////////////////////////
 function extractReviewData(reviewsContainer)
 {
-	var reviewBoxElements = reviewsContainer.getElementsByClassName("review_box");
+    var reviewBoxElements = reviewsContainer.getElementsByClassName("review_box");
 
-	for (var i = 0; i < reviewBoxElements.length; ++i)
-	{
-		var reviewBoxElement = reviewBoxElements[i];
+    for (var i = 0; i < reviewBoxElements.length; ++i)
+    {
+        var reviewBoxElement = reviewBoxElements[i];
 		
 		var reviewIsPositive = null;
 		var reviewThumbElement = reviewBoxElement.getElementsByClassName("thumb");
@@ -617,7 +634,7 @@ function extractReviewData(reviewsContainer)
 		}
 		
 		var reviewText = "";
-		var reviewContentElement = reviewBoxElement.getElementsByClassName("content");
+        var reviewContentElement = reviewBoxElement.getElementsByClassName("content");
 		if (reviewContentElement.length == 0)
 		{
 			logError("Could not determine the content of this review!");
@@ -730,27 +747,27 @@ function showReviewCloud(wordCounts)
 	var cloudWordList = new Array();
 	
 	for (var word in wordCounts)
-	{
+    {
 		var positiveCount = wordCounts[word].positiveCount;
 		var negativeCount = wordCounts[word].negativeCount;
 		var totalCount = positiveCount + negativeCount;
 		
 		var positivePercentage = (positiveCount / totalCount);
-		if (positivePercentage > 0.5)
-		{
-			var hue = POSITIVE_WORD_HUE;
-			var saturation = positivePercentage;
-		}
-		else
-		{
-			var hue = NEGATIVE_WORD_HUE;
-			var saturation = (1.0 - positivePercentage);
-		}
-		
-		saturation = saturation * MAXIMUM_WORD_SATURATION;
+        if (positivePercentage > 0.5)
+        {
+            var hue = POSITIVE_WORD_HUE;
+            var saturation = positivePercentage;
+        }
+        else
+        {
+            var hue = NEGATIVE_WORD_HUE;
+            var saturation = (1.0 - positivePercentage);
+        }
+        
+        saturation = saturation * MAXIMUM_WORD_SATURATION;
 		
 		cloudWordList.push({text: word, weight: totalCount, hue: hue, saturation: saturation});
-	}
+    }
 
 	// Sort in descending order of frequency
 	cloudWordList.sort(function(a,b)
@@ -766,9 +783,9 @@ function showReviewCloud(wordCounts)
 	cloudWordList = cloudWordList.slice(0, MAXIMUM_NUMBER_OF_WORDS_IN_CLOUD);
 	
 	for (var i = 0; i < cloudWordList.length; ++i)
-	{
+    {
 		logInfo(cloudWordList[i].text + " (" + cloudWordList[i].weight + ")");
-	}
+    }
 		
 	hideLoadingOverlay();
 
@@ -971,7 +988,7 @@ var convertHSVToRGB = function(h, s, v)
         if (word.hue)
         {
             var value = MINIMUM_WORD_VALUE + ((1.0 - MINIMUM_WORD_VALUE) * (weight/10));
-            word_style.color = convertHSVToRGB(word.hue, word.saturation, value);
+			word_style.color = convertHSVToRGB(word.hue, word.saturation, value);
         }
 
         while(hitTest(word_span[0], already_placed_words)) {
