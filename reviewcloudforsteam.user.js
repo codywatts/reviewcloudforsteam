@@ -5,7 +5,7 @@
 // @homepage	http://www.codywatts.com/reviewcloudforsteam
 // @updateURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.meta.js
 // @downloadURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.user.js
-// @version		1.0.1
+// @version		1.0.2
 // @description	This user script generates word clouds from the user reviews on Steam.
 // @match		http://store.steampowered.com/app/*
 // @match		https://store.steampowered.com/app/*
@@ -20,7 +20,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 var SHOW_INFO_IN_CONSOLE = false; // Should information about this script's execution be logged to the JavaScript console?
 var NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS = 10; // How many times should we ask the Steam servers to give us more reviews?
-var EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST = 5; // This is the number of reviews we expect to receive per request to the Steam servers.
+var EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST = 20; // This is the number of reviews we expect to receive per request to the Steam servers.
 var DAY_RANGE = 720; // Exclude any reviews older than this many days.
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -45,6 +45,7 @@ var MINIMUM_WORD_VALUE = 0.55; // The minimum intensity value used to render wor
 ////////////////////////////////////////////////////////////////////////////////
 var g_reviews = new Array();
 var g_numberOfOutstandingRequestsMadeToSteamServers = NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS;
+var g_processedReviews = {};
 
 ////////////////////////////////////////////////////////////////////////////////
 // SCRIPT ENTRY POINT
@@ -75,19 +76,29 @@ function main()
 	
 	showLoadingOverlay();
 	
-	var allReviewsDiv = document.getElementById("Reviews_all");
-	if (allReviewsDiv != null)
+	var percentageOfPositiveReviews = getPercentageOfPositiveReviews();
+	if (percentageOfPositiveReviews != null)
 	{
-		extractReviewData(allReviewsDiv);
+		var numberOfRequestsForPositiveReviews = Math.round(NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS * percentageOfPositiveReviews);
+	
+		for (var i = 0; i < numberOfRequestsForPositiveReviews; ++i)
+		{
+			requestReviewsFromServer(i * EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST, "positive");
+		}
+		
+		var numberOfRequestsForNegativeReviews = NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS - numberOfRequestsForPositiveReviews;
+		for (var i = 0; i < numberOfRequestsForNegativeReviews; ++i)
+		{
+			requestReviewsFromServer(i * EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST, "negative");
+		}
 	}
+	// If we could not determine what percentage of reviews were positive...
 	else
 	{
-		logError("Could not find a page element with id \"Reviews_all\". Reviews on the first page will not be included in the ReviewCloud.");
-	}
-	
-	for (var i = 0; i < NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS; ++i)
-	{
-		requestReviewsFromServer((i + 1) * EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST);
+		for (var i = 0; i < NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS; ++i)
+		{
+			requestReviewsFromServer(i * EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST, "all");
+		}
 	}
 }
 
@@ -135,18 +146,46 @@ function createReviewCloudContainer()
 	var reviewCloudHeaderElement = document.createElement('div');
 	reviewCloudHeaderElement.innerHTML = '<h2>ReviewCloud</h2>';
 	reviewCloudHeaderElement.setAttribute("class", "game_area_description");
+	reviewCloudHeaderElement.style.minWidth = $('#game_area_description').width() + 'px';
 	gameDescriptionColumnElement.insertBefore(reviewCloudHeaderElement, userReviewsHeaderElement);
 
 	var reviewCloudContainerElement = document.createElement('div');
 	reviewCloudContainerElement.setAttribute("id", "review_cloud");
-	reviewCloudContainerElement.setAttribute("class", "game_area_description");
 	reviewCloudContainerElement.style.height = REVIEW_CLOUD_HEIGHT + 'px';
 	reviewCloudContainerElement.style.position = 'relative';
 	reviewCloudContainerElement.style.display = 'block';
-    reviewCloudContainerElement.style.minWidth = $('#game_area_description').width() + 'px';
+	reviewCloudContainerElement.style.minWidth = $('#game_area_description').width() + 'px';
 	reviewCloudHeaderElement.appendChild(reviewCloudContainerElement);
 	
 	return reviewCloudContainerElement;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// getPercentageOfPositiveReviews: Returns the percentage of reviews for this
+// game which are positive.
+//
+////////////////////////////////////////////////////////////////////////////////
+function getPercentageOfPositiveReviews()
+{
+	var atAGlanceContainerElement = document.getElementsByClassName("glance_ctn");
+	if (atAGlanceContainerElement == null)
+	{
+		logError("Could not find a page element with class \"glance_ctn\". It will not be possible to determine what percentage of reviews are positive.");
+		return null;
+	}
+	atAGlanceContainerElement = atAGlanceContainerElement[0];
+	
+	var percentageOfPositiveReviewsRegexResults = atAGlanceContainerElement.innerHTML.match(/(\d+)% of the .* user review/);
+	if (percentageOfPositiveReviewsRegexResults == null)
+	{
+		logError("Could not determine what percentage of reviews are positive.");
+		return null;
+	}
+	else
+	{
+		return parseInt(percentageOfPositiveReviewsRegexResults[1]) / 100.0;
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -163,7 +202,7 @@ function getMainContentElement()
 		return null;
 	}
 	
-    return mainContentElement[0];
+	return mainContentElement[0];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -177,7 +216,7 @@ function showLoadingOverlay()
 	var reviewCloudContainerElement = document.getElementById("review_cloud");
 	
 	var spinnerContainer = document.createElement('div');
-    spinnerContainer.setAttribute("name", "spinner_container"); 
+	spinnerContainer.setAttribute("name", "spinner_container"); 
 	spinnerContainer.setAttribute("id", "spinner_container"); 
 	spinnerContainer.style.color = "rgb(240, 240, 240)";
 	spinnerContainer.style.position = "absolute";
@@ -203,10 +242,10 @@ function showLoadingOverlay()
 	);
 	
 	var spinner = document.createElement('div');
-    spinner.setAttribute("name", "spinner");
+	spinner.setAttribute("name", "spinner");
 	spinner.setAttribute("id", "spinner");  
 	spinner.style.position = "absolute";
-    spinner.style.margin = "auto auto";
+	spinner.style.margin = "auto auto";
 	spinner.style.right = "0";
 	spinner.style.left = "0";
 	spinner.style.top = "0";
@@ -214,8 +253,8 @@ function showLoadingOverlay()
 	spinnerContainer.appendChild(spinner);
 	
 	var progressText = document.createElement('div');
-    progressText.setAttribute("name", "progress_text"); 
-    progressText.setAttribute("id", "progress_text"); 
+	progressText.setAttribute("name", "progress_text"); 
+	progressText.setAttribute("id", "progress_text"); 
 	progressText.style.fontSize = "36px";
 	progressText.style.color = "rgb(240, 240, 240)";
 	progressText.style.position = "absolute";
@@ -226,8 +265,8 @@ function showLoadingOverlay()
 	progressText.style.textAlign = "center";
 	progressText.style.display = "table-cell";
 	progressText.style.verticalAlign = "middle";
-    progressText.style.lineHeight = REVIEW_CLOUD_HEIGHT + "px";
-    progressText.innerHTML = "Loading...";
+	progressText.style.lineHeight = REVIEW_CLOUD_HEIGHT + "px";
+	progressText.innerHTML = "Loading...";
 	reviewCloudContainerElement.appendChild(progressText);
 }
 
@@ -280,8 +319,8 @@ function logError(string)
 ////////////////////////////////////////////////////////////////////////////////
 function getAppID()
 {
-    // If this function has not yet been run...
-    if (typeof getAppID.appID == 'undefined')
+	// If this function has not yet been run...
+	if (typeof getAppID.appID == 'undefined')
 	{
 		var documentURL = document.location.href;
 		
@@ -295,7 +334,7 @@ function getAppID()
 		{
 			getAppID.appID = appIDRegexResults[1];
 		}
-    }
+	}
 
 	return getAppID.appID;
 }
@@ -307,8 +346,8 @@ function getAppID()
 ////////////////////////////////////////////////////////////////////////////////
 function getAppName()
 {
-    // If this function has not yet been run...
-    if (typeof getAppName.appName == 'undefined')
+	// If this function has not yet been run...
+	if (typeof getAppName.appName == 'undefined')
 	{
 		getAppName.appName = "";
 		
@@ -326,7 +365,7 @@ function getAppName()
 		{
 			logError("Could not determine the app name.");
 		}
-    }
+	}
 
 	return getAppName.appName;
 }
@@ -338,13 +377,13 @@ function getAppName()
 ////////////////////////////////////////////////////////////////////////////////
 function getAppNameAsRegExp()
 {
-    // If this function has not yet been run...
-    if (typeof getAppNameAsRegExp.regularExpression == 'undefined')
+	// If this function has not yet been run...
+	if (typeof getAppNameAsRegExp.regularExpression == 'undefined')
 	{
 		var uniqueWordsInAppName = getUniqueWords(getAppName().toLowerCase());
 		var pipeDelimitedAppName = Object.keys(uniqueWordsInAppName).join('|');
 		getAppNameAsRegExp.regularExpression = new RegExp('^(' + pipeDelimitedAppName + ')$', 'g');
-    }
+	}
 
 	return getAppNameAsRegExp.regularExpression;
 }
@@ -355,31 +394,31 @@ function getAppNameAsRegExp()
 // at the specified offset.
 //
 ////////////////////////////////////////////////////////////////////////////////
-function requestReviewsFromServer(startOffset)
+function requestReviewsFromServer(startOffset, filter)
 {
-    var requestURL = "http://store.steampowered.com/appreviews/" + getAppID() + "?start_offset=" + startOffset + "&day_range=" + DAY_RANGE + "&filter=all"
-    logInfo("Requesting reviews starting at offset " + startOffset + " via: " + requestURL);
+	var requestURL = "http://store.steampowered.com/appreviews/" + getAppID() + "?start_offset=" + startOffset + "&day_range=" + DAY_RANGE + "&filter=" + filter;
+	logInfo("Requesting \"" + filter + "\" reviews starting at offset " + startOffset + " via: " + requestURL);
 
-    GM_xmlhttpRequest({
-        method: "GET",
-        url: requestURL,
-        onload: function(response)
-        {
+	GM_xmlhttpRequest({
+		method: "GET",
+		url: requestURL,
+		onload: function(response)
+		{
 			onReceivedReviewsFromServer(response);
-        },
+		},
 		onabort: function(response)
-        {
+		{
 			onRequestFailed(response);
-        },
+		},
 		onerror: function(response)
-        {
+		{
 			onRequestFailed(response);
-        },
+		},
 		ontimeout: function(response)
-        {
+		{
 			onRequestFailed(response);
-        }
-    });
+		}
+	});
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -457,8 +496,8 @@ function onAllReviewsReadyForProcessing(response)
 {
 	var wordCounts = {};
 
-    for (var i = 0; i < g_reviews.length; ++i)
-    {
+	for (var i = 0; i < g_reviews.length; ++i)
+	{
 		var review = g_reviews[i];
 
 		// Steam censors swears in reviews by replacing them with hearts, which can ♥♥♥♥ up the analysis. Get rid of any of those.
@@ -467,40 +506,40 @@ function onAllReviewsReadyForProcessing(response)
 		// Change the text to lowercase.
 		review.text = review.text.toLowerCase();
 		
-		// Replace apostrophe-like characters with apostrophes
-		review.text = review.text.replace(/[’´]/g, '\'');
-
-		// Remove any trailing "'s" on words.
-		review.text = review.text.replace(/'s/g, '');
+		// Replace apostrophe-like characters with apostrophes.
+		review.text = review.text.replace(/[‘’´]/g, '\'');
+		
+		// Replace quotation mark-like characters with quotation marks.
+		review.text = review.text.replace(/[“”]/g, '"');
 
 		var uniqueWordsInThisReview = getUniqueWords(review.text);
 		
-        // Go over the set of unique words in this review and increment their counts in the "wordCounts" array
-    	for (var word in uniqueWordsInThisReview)
-    	{
-            if (word in wordCounts == false)
-            {
-                wordCounts[word] = {negativeCount: 0, positiveCount: 0};
-            }
-            
-            if (review.isPositive)
-            {              
-            	wordCounts[word].positiveCount++;
+		// Go over the set of unique words in this review and increment their counts in the "wordCounts" array.
+		for (var word in uniqueWordsInThisReview)
+		{
+			if (word in wordCounts == false)
+			{
+				wordCounts[word] = {negativeCount: 0, positiveCount: 0};
 			}
-            else
-            {
-                wordCounts[word].negativeCount++;
-            }
-        }
-    }
+			
+			if (review.isPositive)
+			{			  
+				wordCounts[word].positiveCount++;
+			}
+			else
+			{
+				wordCounts[word].negativeCount++;
+			}
+		}
+	}
 
-    for (var word in wordCounts)
-    {
+	for (var word in wordCounts)
+	{
 		if (shouldBeFiltered(word))
 		{
 			delete wordCounts[word];
 		}
-    }
+	}
 	
 	consolidateSimilarWords(wordCounts);
 	
@@ -531,10 +570,10 @@ function consolidateSimilarWords(wordCounts)
 	]
 			
 	for (var word in wordCounts)
-    {
+	{
 		// If the word ends with 's'...
 		if (/s$/.test(word))
-        {
+		{
 			var pluralForm = word;
 						
 			var foundSingularForm = false;
@@ -578,8 +617,8 @@ function consolidateSimilarWords(wordCounts)
 					}
 				}
 			}
-        }
-    }
+		}
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -606,11 +645,31 @@ function stripURLs(string)
 ////////////////////////////////////////////////////////////////////////////////
 function extractReviewData(reviewsContainer)
 {
-    var reviewBoxElements = reviewsContainer.getElementsByClassName("review_box");
+	var reviewBoxElements = reviewsContainer.getElementsByClassName("review_box");
 
-    for (var i = 0; i < reviewBoxElements.length; ++i)
-    {
-        var reviewBoxElement = reviewBoxElements[i];
+	for (var i = 0; i < reviewBoxElements.length; ++i)
+	{
+		var reviewBoxElement = reviewBoxElements[i];
+		
+		var reviewId = reviewBoxElement.innerHTML.match(/"ReviewContent(.+\d+)"/i);
+		if (reviewId == null)
+		{
+			logError("Could not determine a review ID.");
+		}
+		else
+		{
+			reviewId = reviewId[1];
+			
+			// If we have already parsed this review, skip it.
+			if (reviewId in g_processedReviews)
+			{
+				continue;
+			}
+			else
+			{
+				g_processedReviews[reviewId] = true;
+			}
+		}
 		
 		var reviewIsPositive = null;
 		var reviewThumbElement = reviewBoxElement.getElementsByClassName("thumb");
@@ -634,7 +693,7 @@ function extractReviewData(reviewsContainer)
 		}
 		
 		var reviewText = "";
-        var reviewContentElement = reviewBoxElement.getElementsByClassName("content");
+		var reviewContentElement = reviewBoxElement.getElementsByClassName("content");
 		if (reviewContentElement.length == 0)
 		{
 			logError("Could not determine the content of this review!");
@@ -642,7 +701,10 @@ function extractReviewData(reviewsContainer)
 		}
 		else
 		{
-			reviewText = reviewContentElement[0].textContent;
+			reviewContentElement = reviewContentElement[0];
+			// Strip all HTML tags (and convert them to line-breaks.)
+			reviewContentElement.innerHTML = reviewContentElement.innerHTML.replace(/<[^>]*>/ig, "\n");
+			reviewText = reviewContentElement.textContent;
 			reviewText = stripURLs(reviewText);
 			reviewText = reviewText.trim();
 		}
@@ -659,8 +721,11 @@ function extractReviewData(reviewsContainer)
 ////////////////////////////////////////////////////////////////////////////////
 function getUniqueWords(text)
 {
+	// Remove any trailing "'s" on words.
+	text = text.replace(/'s/g, '');
+		
 	// Split the text on all non-word characters, except for hyphens, apostrophes, ampersands and slashes.
-	var words = text.split(/[^\w-'&\\\/]+/);
+	var words = text.split(/\W*[^\w-'&\\\/]+\W*|--+|[\\\/]+(?!\d)/);
 	
 	var uniqueWords = {};
 	
@@ -693,7 +758,7 @@ function getUniqueWords(text)
 function shouldBeFiltered(word)
 {
 	// Remove any word which contains an apostrophe (e.g. don't, can't, i've, should've) because those words aren't interesting.
-	if (/['’´]/.test(word))
+	if (/'/.test(word))
 	{
 		return true;
 	}
@@ -747,27 +812,27 @@ function showReviewCloud(wordCounts)
 	var cloudWordList = new Array();
 	
 	for (var word in wordCounts)
-    {
+	{
 		var positiveCount = wordCounts[word].positiveCount;
 		var negativeCount = wordCounts[word].negativeCount;
 		var totalCount = positiveCount + negativeCount;
 		
 		var positivePercentage = (positiveCount / totalCount);
-        if (positivePercentage > 0.5)
-        {
-            var hue = POSITIVE_WORD_HUE;
-            var saturation = positivePercentage;
-        }
-        else
-        {
-            var hue = NEGATIVE_WORD_HUE;
-            var saturation = (1.0 - positivePercentage);
-        }
-        
-        saturation = saturation * MAXIMUM_WORD_SATURATION;
+		if (positivePercentage > 0.5)
+		{
+			var hue = POSITIVE_WORD_HUE;
+			var saturation = positivePercentage;
+		}
+		else
+		{
+			var hue = NEGATIVE_WORD_HUE;
+			var saturation = (1.0 - positivePercentage);
+		}
+		
+		saturation = saturation * MAXIMUM_WORD_SATURATION;
 		
 		cloudWordList.push({text: word, weight: totalCount, hue: hue, saturation: saturation});
-    }
+	}
 
 	// Sort in descending order of frequency
 	cloudWordList.sort(function(a,b)
@@ -783,9 +848,9 @@ function showReviewCloud(wordCounts)
 	cloudWordList = cloudWordList.slice(0, MAXIMUM_NUMBER_OF_WORDS_IN_CLOUD);
 	
 	for (var i = 0; i < cloudWordList.length; ++i)
-    {
+	{
 		logInfo(cloudWordList[i].text + " (" + cloudWordList[i].weight + ")");
-    }
+	}
 		
 	hideLoadingOverlay();
 
@@ -845,230 +910,230 @@ var convertHSVToRGB = function(h, s, v)
 (function( $ ) {
   "use strict";
   $.fn.jQCloud = function(word_array, options) {
-    // Reference to the container element
-    var $this = this;
-    // Namespace word ids to avoid collisions between multiple clouds
-    var cloud_namespace = $this.attr('id') || Math.floor((Math.random()*1000000)).toString(36);
+	// Reference to the container element
+	var $this = this;
+	// Namespace word ids to avoid collisions between multiple clouds
+	var cloud_namespace = $this.attr('id') || Math.floor((Math.random()*1000000)).toString(36);
 
-    // Default options value
-    var default_options = {
-      width: $this.width(),
-      height: $this.height(),
-      center: {
-        x: ((options && options.width) ? options.width : $this.width()) / 2.0,
-        y: ((options && options.height) ? options.height : $this.height()) / 2.0
-      },
-      delayedMode: word_array.length > 50,
-      shape: false, // It defaults to elliptic shape
-      encodeURI: true,
-      removeOverflowing: true
-    };
+	// Default options value
+	var default_options = {
+	  width: $this.width(),
+	  height: $this.height(),
+	  center: {
+		x: ((options && options.width) ? options.width : $this.width()) / 2.0,
+		y: ((options && options.height) ? options.height : $this.height()) / 2.0
+	  },
+	  delayedMode: word_array.length > 50,
+	  shape: false, // It defaults to elliptic shape
+	  encodeURI: true,
+	  removeOverflowing: true
+	};
 
-    options = $.extend(default_options, options || {});
+	options = $.extend(default_options, options || {});
 
-    // Add the "jqcloud" class to the container for easy CSS styling, set container width/height
-    $this.addClass("jqcloud").height(options.height);
+	// Add the "jqcloud" class to the container for easy CSS styling, set container width/height
+	$this.addClass("jqcloud").height(options.height);
 
-    // Container's CSS position cannot be 'static'
-    if ($this.css("position") === "static") {
-      $this.css("position", "relative");
-    }
+	// Container's CSS position cannot be 'static'
+	if ($this.css("position") === "static") {
+	  $this.css("position", "relative");
+	}
 
-    var drawWordCloud = function() {
-      // Helper function to test if an element overlaps others
-      var hitTest = function(elem, other_elems) {
-        // Pairwise overlap detection
-        var overlapping = function(a, b) {
-          if (Math.abs(2.0*a.offsetLeft + (a.offsetWidth + PER_WORD_PADDING) - 2.0*b.offsetLeft - (b.offsetWidth + PER_WORD_PADDING)) < (a.offsetWidth + PER_WORD_PADDING) + (b.offsetWidth + PER_WORD_PADDING)) {
-            if (Math.abs(2.0*a.offsetTop + (a.offsetHeight + PER_WORD_PADDING) - 2.0*b.offsetTop - (b.offsetHeight + PER_WORD_PADDING)) < (a.offsetHeight + PER_WORD_PADDING) + (b.offsetHeight + PER_WORD_PADDING)) {
-              return true;
-            }
-          }
-          return false;
-        };
-        var i = 0;
-        // Check elements for overlap one by one, stop and return false as soon as an overlap is found
-        for(i = 0; i < other_elems.length; i++) {
-          if (overlapping(elem, other_elems[i])) {
-            return true;
-          }
-        }
-        return false;
-      };
+	var drawWordCloud = function() {
+	  // Helper function to test if an element overlaps others
+	  var hitTest = function(elem, other_elems) {
+		// Pairwise overlap detection
+		var overlapping = function(a, b) {
+		  if (Math.abs(2.0*a.offsetLeft + (a.offsetWidth + PER_WORD_PADDING) - 2.0*b.offsetLeft - (b.offsetWidth + PER_WORD_PADDING)) < (a.offsetWidth + PER_WORD_PADDING) + (b.offsetWidth + PER_WORD_PADDING)) {
+			if (Math.abs(2.0*a.offsetTop + (a.offsetHeight + PER_WORD_PADDING) - 2.0*b.offsetTop - (b.offsetHeight + PER_WORD_PADDING)) < (a.offsetHeight + PER_WORD_PADDING) + (b.offsetHeight + PER_WORD_PADDING)) {
+			  return true;
+			}
+		  }
+		  return false;
+		};
+		var i = 0;
+		// Check elements for overlap one by one, stop and return false as soon as an overlap is found
+		for(i = 0; i < other_elems.length; i++) {
+		  if (overlapping(elem, other_elems[i])) {
+			return true;
+		  }
+		}
+		return false;
+	  };
 
-      // Make sure every weight is a number before sorting
-      for (var i = 0; i < word_array.length; i++) {
-        word_array[i].weight = parseFloat(word_array[i].weight, 10);
-      }
+	  // Make sure every weight is a number before sorting
+	  for (var i = 0; i < word_array.length; i++) {
+		word_array[i].weight = parseFloat(word_array[i].weight, 10);
+	  }
 
-      // Sort word_array from the word with the highest weight to the one with the lowest
-      word_array.sort(function(a, b) { if (a.weight < b.weight) {return 1;} else if (a.weight > b.weight) {return -1;} else {return 0;} });
+	  // Sort word_array from the word with the highest weight to the one with the lowest
+	  word_array.sort(function(a, b) { if (a.weight < b.weight) {return 1;} else if (a.weight > b.weight) {return -1;} else {return 0;} });
 
-      var step = (options.shape === "rectangular") ? 18.0 : 2.0,
-          already_placed_words = [],
-          aspect_ratio = options.width / options.height;
+	  var step = (options.shape === "rectangular") ? 18.0 : 2.0,
+		  already_placed_words = [],
+		  aspect_ratio = options.width / options.height;
 
-      // Function to draw a word, by moving it in spiral until it finds a suitable empty place. This will be iterated on each word.
-      var drawOneWord = function(index, word) {
-        // Define the ID attribute of the span that will wrap the word, and the associated jQuery selector string
-        var word_id = cloud_namespace + "_word_" + index,
-            word_selector = "#" + word_id,
-            angle = 6.28 * Math.random(),
-            radius = 0.0,
+	  // Function to draw a word, by moving it in spiral until it finds a suitable empty place. This will be iterated on each word.
+	  var drawOneWord = function(index, word) {
+		// Define the ID attribute of the span that will wrap the word, and the associated jQuery selector string
+		var word_id = cloud_namespace + "_word_" + index,
+			word_selector = "#" + word_id,
+			angle = 6.28 * Math.random(),
+			radius = 0.0,
 
-            // Only used if option.shape == 'rectangular'
-            steps_in_direction = 0.0,
-            quarter_turns = 0.0,
+			// Only used if option.shape == 'rectangular'
+			steps_in_direction = 0.0,
+			quarter_turns = 0.0,
 
-            weight = 5,
-            custom_class = "",
-            inner_html = "",
-            word_span;
+			weight = 5,
+			custom_class = "",
+			inner_html = "",
+			word_span;
 
-        // Extend word html options with defaults
-        word.html = $.extend(word.html, {id: word_id});
+		// Extend word html options with defaults
+		word.html = $.extend(word.html, {id: word_id});
 
-        // If custom class was specified, put them into a variable and remove it from html attrs, to avoid overwriting classes set by jQCloud
-        if (word.html && word.html["class"]) {
-          custom_class = word.html["class"];
-          delete word.html["class"];
-        }
+		// If custom class was specified, put them into a variable and remove it from html attrs, to avoid overwriting classes set by jQCloud
+		if (word.html && word.html["class"]) {
+		  custom_class = word.html["class"];
+		  delete word.html["class"];
+		}
 
-        // Check if min(weight) > max(weight) otherwise use default
-        if (word_array[0].weight > word_array[word_array.length - 1].weight) {
-          // Linearly map the original weight to a discrete scale from 1 to 10
-          weight = Math.round((word.weight - word_array[word_array.length - 1].weight) /
-                              (word_array[0].weight - word_array[word_array.length - 1].weight) * 9.0) + 1;
-        }
+		// Check if min(weight) > max(weight) otherwise use default
+		if (word_array[0].weight > word_array[word_array.length - 1].weight) {
+		  // Linearly map the original weight to a discrete scale from 1 to 10
+		  weight = Math.round((word.weight - word_array[word_array.length - 1].weight) /
+							  (word_array[0].weight - word_array[word_array.length - 1].weight) * 9.0) + 1;
+		}
 
-        word_span = $('<span>').attr(word.html).addClass(custom_class + " " + 'w' + weight);
+		word_span = $('<span>').attr(word.html).addClass(custom_class + " " + 'w' + weight);
 
-        // Append link if word.url attribute was set
-        if (word.link) {
-          // If link is a string, then use it as the link href
-          if (typeof word.link === "string") {
-            word.link = {href: word.link};
-          }
+		// Append link if word.url attribute was set
+		if (word.link) {
+		  // If link is a string, then use it as the link href
+		  if (typeof word.link === "string") {
+			word.link = {href: word.link};
+		  }
 
-          // Extend link html options with defaults
-          if ( options.encodeURI ) {
-            word.link = $.extend(word.link, { href: encodeURI(word.link.href).replace(/'/g, "%27") });
-          }
+		  // Extend link html options with defaults
+		  if ( options.encodeURI ) {
+			word.link = $.extend(word.link, { href: encodeURI(word.link.href).replace(/'/g, "%27") });
+		  }
 
-          inner_html = $('<a>').attr(word.link).text(word.text);
-        } else {
-          inner_html = word.text;
-        }
-        word_span.append(inner_html);
+		  inner_html = $('<a>').attr(word.link).text(word.text);
+		} else {
+		  inner_html = word.text;
+		}
+		word_span.append(inner_html);
 
-        // Bind handlers to words
-        if (!!word.handlers) {
-          for (var prop in word.handlers) {
-            if (word.handlers.hasOwnProperty(prop) && typeof word.handlers[prop] === 'function') {
-              $(word_span).bind(prop, word.handlers[prop]);
-            }
-          }
-        }
+		// Bind handlers to words
+		if (!!word.handlers) {
+		  for (var prop in word.handlers) {
+			if (word.handlers.hasOwnProperty(prop) && typeof word.handlers[prop] === 'function') {
+			  $(word_span).bind(prop, word.handlers[prop]);
+			}
+		  }
+		}
 
-        $this.append(word_span);
+		$this.append(word_span);
 
-        var width = word_span.width(),
-            height = word_span.height(),
-            left = options.center.x - width / 2.0,
-            top = options.center.y - height / 2.0;
+		var width = word_span.width(),
+			height = word_span.height(),
+			left = options.center.x - width / 2.0,
+			top = options.center.y - height / 2.0;
 
-        // Save a reference to the style property, for better performance
-        var word_style = word_span[0].style;
-        word_style.position = "absolute";
-        word_style.left = left + "px";
-        word_style.top = top + "px";
+		// Save a reference to the style property, for better performance
+		var word_style = word_span[0].style;
+		word_style.position = "absolute";
+		word_style.left = left + "px";
+		word_style.top = top + "px";
 
-        $("#" + word_id).hide().fadeIn(FADE_IN_TIME);
+		$("#" + word_id).hide().fadeIn(FADE_IN_TIME);
 
-        if (word.hue)
-        {
-            var value = MINIMUM_WORD_VALUE + ((1.0 - MINIMUM_WORD_VALUE) * (weight/10));
+		if (word.hue)
+		{
+			var value = MINIMUM_WORD_VALUE + ((1.0 - MINIMUM_WORD_VALUE) * (weight/10));
 			word_style.color = convertHSVToRGB(word.hue, word.saturation, value);
-        }
+		}
 
-        while(hitTest(word_span[0], already_placed_words)) {
-          // option shape is 'rectangular' so move the word in a rectangular spiral
-          if (options.shape === "rectangular") {
-            steps_in_direction++;
-            if (steps_in_direction * step > (1 + Math.floor(quarter_turns / 2.0)) * step * ((quarter_turns % 4 % 2) === 0 ? 1 : aspect_ratio)) {
-              steps_in_direction = 0.0;
-              quarter_turns++;
-            }
-            switch(quarter_turns % 4) {
-              case 1:
-                left += step * aspect_ratio + Math.random() * 2.0;
-                break;
-              case 2:
-                top -= step + Math.random() * 2.0;
-                break;
-              case 3:
-                left -= step * aspect_ratio + Math.random() * 2.0;
-                break;
-              case 0:
-                top += step + Math.random() * 2.0;
-                break;
-            }
-          } else { // Default settings: elliptic spiral shape
-            radius += step;
-            angle += (index % 2 === 0 ? 1 : -1)*step;
+		while(hitTest(word_span[0], already_placed_words)) {
+		  // option shape is 'rectangular' so move the word in a rectangular spiral
+		  if (options.shape === "rectangular") {
+			steps_in_direction++;
+			if (steps_in_direction * step > (1 + Math.floor(quarter_turns / 2.0)) * step * ((quarter_turns % 4 % 2) === 0 ? 1 : aspect_ratio)) {
+			  steps_in_direction = 0.0;
+			  quarter_turns++;
+			}
+			switch(quarter_turns % 4) {
+			  case 1:
+				left += step * aspect_ratio + Math.random() * 2.0;
+				break;
+			  case 2:
+				top -= step + Math.random() * 2.0;
+				break;
+			  case 3:
+				left -= step * aspect_ratio + Math.random() * 2.0;
+				break;
+			  case 0:
+				top += step + Math.random() * 2.0;
+				break;
+			}
+		  } else { // Default settings: elliptic spiral shape
+			radius += step;
+			angle += (index % 2 === 0 ? 1 : -1)*step;
 
-            left = options.center.x - (width / 2.0) + (radius*Math.cos(angle)) * aspect_ratio;
-            top = options.center.y + radius*Math.sin(angle) - (height / 2.0);
-          }
-          word_style.left = left + "px";
-          word_style.top = top + "px";
-        }
+			left = options.center.x - (width / 2.0) + (radius*Math.cos(angle)) * aspect_ratio;
+			top = options.center.y + radius*Math.sin(angle) - (height / 2.0);
+		  }
+		  word_style.left = left + "px";
+		  word_style.top = top + "px";
+		}
 
-        // Don't render word if part of it would be outside the container
-        if (options.removeOverflowing && (left < 0 || top < 0 || (left + width) > options.width || (top + height) > options.height)) {
-          word_span.remove()
-          return;
-        }
+		// Don't render word if part of it would be outside the container
+		if (options.removeOverflowing && (left < 0 || top < 0 || (left + width) > options.width || (top + height) > options.height)) {
+		  word_span.remove()
+		  return;
+		}
 
-        already_placed_words.push(word_span[0]);
+		already_placed_words.push(word_span[0]);
 
-        // Invoke callback if existing
-        if ($.isFunction(word.afterWordRender)) {
-          word.afterWordRender.call(word_span);
-        }
-      };
+		// Invoke callback if existing
+		if ($.isFunction(word.afterWordRender)) {
+		  word.afterWordRender.call(word_span);
+		}
+	  };
 
-      var drawOneWordDelayed = function(index) {
-        index = index || 0;
-        if (!$this.is(':visible')) { // if not visible then do not attempt to draw
-          setTimeout(function(){drawOneWordDelayed(index);},PER_WORD_DELAY_TIME);
-          return;
-        }
-        if (index < word_array.length) {
-          drawOneWord(index, word_array[index]);
-          setTimeout(function(){drawOneWordDelayed(index + 1);}, PER_WORD_DELAY_TIME);
-        } else {
-          if ($.isFunction(options.afterCloudRender)) {
-            options.afterCloudRender.call($this);
-          }
-        }
-      };
+	  var drawOneWordDelayed = function(index) {
+		index = index || 0;
+		if (!$this.is(':visible')) { // if not visible then do not attempt to draw
+		  setTimeout(function(){drawOneWordDelayed(index);},PER_WORD_DELAY_TIME);
+		  return;
+		}
+		if (index < word_array.length) {
+		  drawOneWord(index, word_array[index]);
+		  setTimeout(function(){drawOneWordDelayed(index + 1);}, PER_WORD_DELAY_TIME);
+		} else {
+		  if ($.isFunction(options.afterCloudRender)) {
+			options.afterCloudRender.call($this);
+		  }
+		}
+	  };
 
-      // Iterate drawOneWord on every word. The way the iteration is done depends on the drawing mode (delayedMode is true or false)
-      if (options.delayedMode){
-        drawOneWordDelayed();
-      }
-      else {
-        $.each(word_array, drawOneWord);
-        if ($.isFunction(options.afterCloudRender)) {
-          options.afterCloudRender.call($this);
-        }
-      }
-    };
+	  // Iterate drawOneWord on every word. The way the iteration is done depends on the drawing mode (delayedMode is true or false)
+	  if (options.delayedMode){
+		drawOneWordDelayed();
+	  }
+	  else {
+		$.each(word_array, drawOneWord);
+		if ($.isFunction(options.afterCloudRender)) {
+		  options.afterCloudRender.call($this);
+		}
+	  }
+	};
 
-    // Delay execution so that the browser can render the page before the computatively intensive word cloud drawing
-    setTimeout(function(){drawWordCloud();}, PER_WORD_DELAY_TIME);
-    return $this;
+	// Delay execution so that the browser can render the page before the computatively intensive word cloud drawing
+	setTimeout(function(){drawWordCloud();}, PER_WORD_DELAY_TIME);
+	return $this;
   };
 })(jQuery);
 
