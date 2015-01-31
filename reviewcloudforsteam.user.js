@@ -5,7 +5,7 @@
 // @homepage	http://www.codywatts.com/reviewcloudforsteam
 // @updateURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.meta.js
 // @downloadURL	https://www.codywatts.com/reviewcloudforsteam/reviewcloudforsteam.user.js
-// @version		1.0.2
+// @version		1.0.3
 // @description	This user script generates word clouds from the user reviews on Steam.
 // @match		http://store.steampowered.com/app/*
 // @match		https://store.steampowered.com/app/*
@@ -22,23 +22,30 @@ var SHOW_INFO_IN_CONSOLE = false; // Should information about this script's exec
 var NUMBER_OF_REQUESTS_FOR_ADDITIONAL_REVIEWS = 10; // How many times should we ask the Steam servers to give us more reviews?
 var EXPECTED_NUMBER_OF_REVIEWS_RECEIVED_PER_REQUEST = 20; // This is the number of reviews we expect to receive per request to the Steam servers.
 var DAY_RANGE = 720; // Exclude any reviews older than this many days.
+var MULTI_TERM_WEIGHTING = 2.0; // The value assigned per word in a given term. Higher values will produce ReviewClouds with more multi-word terms.
+var MAXIMUM_TERM_LENGTH = 10; // The maximum number of words which can appear in a term.
+var TERM_SIGNIFICANCE_THRESHOLD = 0.4; // The percentage of time for which a term must occur as a subset of another (longer) term in order for that term to be ignored.
 
 ////////////////////////////////////////////////////////////////////////////////
 // AESTHETIC PROPERTIES
 ////////////////////////////////////////////////////////////////////////////////
 var REVIEW_CLOUD_HEIGHT = 350; // The height of the ReviewCloud in pixels.
-var DEFAULT_FONT_SIZE = 10; // The font size of the smallest text in the ReviewCloud in pixels.
-var FONT_SIZE_PERCENT_INCREASE_PER_LEVEL = 35; // The percentage increase in font size between "levels" in the ReviewCloud.
-var MAXIMUM_NUMBER_OF_WORDS_IN_CLOUD = 100; // The maximum number of words which will appear in the cloud.
-var PER_WORD_DELAY_TIME = 4; // The delay between the appearance of each word in the ReviewCloud (in milliseconds.)
-var PER_WORD_PADDING = 3; // The padding between words in the ReviewCloud, in pixels.
+var DEFAULT_FONT_SIZE = 8; // The font size of the smallest text in the ReviewCloud in pixels.
+var FONT_SIZE_PERCENT_INCREASE_PER_LEVEL = 20; // The percentage increase in font size between "levels" in the ReviewCloud.
+var MAXIMUM_NUMBER_OF_TERMS_IN_CLOUD = 100; // The maximum number of terms which will appear in the cloud.
+var PER_TERM_DELAY_TIME = 4; // The delay between the appearance of each term in the ReviewCloud (in milliseconds.)
+var TERM_PADDING = 3; // The padding between a tern and its border, in pixels.
+var TERM_SPACING = 3; // The spacing between a term and another term in the ReviewCloud, in pixels.
 var SPINNER_SIZE = (REVIEW_CLOUD_HEIGHT * 0.75); // The size of the loading spinner, in pixels.
 var FADE_OUT_TIME = 500; // How quickly the "loading" overlay fades out (in milliseconds.)
 var FADE_IN_TIME = 300; // How quickly the ReviewCloud fades in (in milliseconds.)
-var POSITIVE_WORD_HUE = 205; // The hue used to render words which have a 100% positive association.
-var NEGATIVE_WORD_HUE = 5; // The hue used to render words which have a 100% negative association.
-var MAXIMUM_WORD_SATURATION = 0.5; // The maximum saturation value used to render words.
-var MINIMUM_WORD_VALUE = 0.55; // The minimum intensity value used to render words. Words with greater weight are rendered with higher intensity values.
+var POSITIVE_TERM_HUE = 205; // The hue used to render terms which have a 100% positive association.
+var NEGATIVE_TERM_HUE = 5; // The hue used to render terms which have a 100% negative association.
+var MAXIMUM_TERM_SATURATION = 0.5; // The maximum saturation value used to render terms.
+var MINIMUM_TERM_VALUE = 0.55; // The minimum intensity value used to render terms. Terms with greater weight are rendered with higher intensity values.
+var LOG_BASE = 3.0; // Controls the size of the terms relative to each other. Lower values lead to greater scale variations. Should be between 1.0 and infinity.
+var TERM_BACKGROUND_ALPHA = 0.1; // The alpha value for the term background. Should be between 0.0 and 1.0.
+var ROUNDED_CORNER_RADIUS = 6; // The radius of the term-container's rounded corners, in pixels.
 
 ////////////////////////////////////////////////////////////////////////////////
 // "GLOBAL VARIABLES"
@@ -123,7 +130,7 @@ function createReviewCloudContainer()
 	var mainContentElement = getMainContentElement();
 	if (mainContentElement == null)
 	{
-		logError("Could not find a page element with id \"main_content\". The ReviewCloud will not be displayed.");
+		logError("Could not locate the main content element. The ReviewCloud will not be displayed.");
 		return null;
 	}
 	
@@ -199,6 +206,7 @@ function getMainContentElement()
 	var mainContentElement = document.getElementsByClassName("page_content_ctn");
 	if (mainContentElement == null)
 	{
+		logError("Could not find a page element with class name \"page_content_ctn\".");
 		return null;
 	}
 	
@@ -207,8 +215,8 @@ function getMainContentElement()
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// showLoadingOverlay: Displays an animated "loading" overlay while the word
-// cloud is being generated.
+// showLoadingOverlay: Displays an animated "loading" overlay while the
+// ReviewCloud is being generated.
 //
 ////////////////////////////////////////////////////////////////////////////////
 function showLoadingOverlay()
@@ -272,7 +280,7 @@ function showLoadingOverlay()
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// hideLoadingOverlay: Fades out the "loading" overlay when the word cloud is
+// hideLoadingOverlay: Fades out the "loading" overlay when the ReviewCloud is
 // ready to be displayed.
 //
 ////////////////////////////////////////////////////////////////////////////////
@@ -357,7 +365,7 @@ function getAppName()
 			var appNameDiv = mainContentElement.getElementsByClassName("apphub_AppName");
 			if (appNameDiv.length != 0)
 			{
-				getAppName.appName = appNameDiv[0].innerHTML.trim();	
+				getAppName.appName = sanitizeText(appNameDiv[0].innerHTML.trim());
 			}
 		}
 		
@@ -380,9 +388,9 @@ function getAppNameAsRegExp()
 	// If this function has not yet been run...
 	if (typeof getAppNameAsRegExp.regularExpression == 'undefined')
 	{
-		var uniqueWordsInAppName = getUniqueWords(getAppName().toLowerCase());
-		var pipeDelimitedAppName = Object.keys(uniqueWordsInAppName).join('|');
-		getAppNameAsRegExp.regularExpression = new RegExp('^(' + pipeDelimitedAppName + ')$', 'g');
+		var uniqueWordsInAppName = getUniqueTerms(getAppName(), 1, 1);
+		var pipeDelimitedAppName = uniqueWordsInAppName.join('|');
+		getAppNameAsRegExp.regularExpression = new RegExp('\\b(' + pipeDelimitedAppName + ')\\b', 'g');
 	}
 
 	return getAppNameAsRegExp.regularExpression;
@@ -478,7 +486,7 @@ function onRequestFailed(response)
 function onRequestFinished()
 {
 	g_numberOfOutstandingRequestsMadeToSteamServers--;
-		
+	
 	if (g_numberOfOutstandingRequestsMadeToSteamServers == 0)
 	{
 		onAllReviewsReadyForProcessing();
@@ -494,74 +502,261 @@ function onRequestFinished()
 ////////////////////////////////////////////////////////////////////////////////
 function onAllReviewsReadyForProcessing(response)
 {
-	var wordCounts = {};
+	// Sanitize the text for all reviews so that it is ready for processing.
+	for (var i = 0; i < g_reviews.length; ++i)
+	{
+		g_reviews[i].text = sanitizeText(g_reviews[i].text);
+	}
+
+	// Extract all multi-word terms from the review text
+	logInfo("Looking for meaningful multi-word terms...");
+	var termCounts = {};
 
 	for (var i = 0; i < g_reviews.length; ++i)
 	{
 		var review = g_reviews[i];
-
-		// Steam censors swears in reviews by replacing them with hearts, which can ♥♥♥♥ up the analysis. Get rid of any of those.
-		review.text = review.text.replace(/(\u2665\w*)/g, '');
-
-		// Change the text to lowercase.
-		review.text = review.text.toLowerCase();
+		var uniqueTermsInThisReview = getUniqueTerms(review.text, 2, MAXIMUM_TERM_LENGTH);
 		
-		// Replace apostrophe-like characters with apostrophes.
-		review.text = review.text.replace(/[‘’´]/g, '\'');
-		
-		// Replace quotation mark-like characters with quotation marks.
-		review.text = review.text.replace(/[“”]/g, '"');
-
-		var uniqueWordsInThisReview = getUniqueWords(review.text);
-		
-		// Go over the set of unique words in this review and increment their counts in the "wordCounts" array.
-		for (var word in uniqueWordsInThisReview)
+		// Go over the set of unique terms in this review and increment their counts in the "termCounts" array.
+		for (var j = 0; j < uniqueTermsInThisReview.length; ++j)
 		{
-			if (word in wordCounts == false)
+			var term = uniqueTermsInThisReview[j];
+			if (term in termCounts == false)
 			{
-				wordCounts[word] = {negativeCount: 0, positiveCount: 0};
+				termCounts[term] = { negativeCount: 0, positiveCount: 0 };
 			}
 			
 			if (review.isPositive)
-			{			  
-				wordCounts[word].positiveCount++;
+			{
+				termCounts[term].positiveCount++;
 			}
 			else
 			{
-				wordCounts[word].negativeCount++;
+				termCounts[term].negativeCount++;
 			}
 		}
 	}
-
-	for (var word in wordCounts)
+	
+	// Filter out multi-word terms which only occur once, or which we consider undesirable.
+	for (var term in termCounts)
 	{
-		if (shouldBeFiltered(word))
+		if ((termCounts[term].positiveCount + termCounts[term].negativeCount) <= 1)
 		{
-			delete wordCounts[word];
+			delete termCounts[term];
+		}
+		else if (shouldBeFiltered(term))
+		{
+			delete termCounts[term];
+		}
+	}
+
+	// Create an array to hold all of our multi-word terms.
+	var multiWordTerms = [];
+	
+	for (var term in termCounts)
+	{
+		multiWordTerms.push(term);
+	}
+
+	// Sort the multi-word term array so that the terms with the most words in them are at the front.
+	multiWordTerms.sort(function(a, b)
+	{
+		var numberOfWordsInA = a.split(" ").length;
+		var numberOfWordsInB = b.split(" ").length;
+		if (numberOfWordsInA != numberOfWordsInB)
+		{
+			return numberOfWordsInB - numberOfWordsInA;
+		}
+		else
+		{
+			aCounts = termCounts[a];
+			bCounts = termCounts[b];
+			return ((bCounts.positiveCount + bCounts.negativeCount) - (aCounts.positiveCount + aCounts.negativeCount));
+		}
+	});
+	
+	// Remove terms which we think are derivative of other, longer terms.
+	for (var i = 0; i < multiWordTerms.length; ++i)
+	{
+		var parentTerm = multiWordTerms[i];
+		var parentTermCount = termCounts[parentTerm].positiveCount + termCounts[parentTerm].negativeCount;
+		if (parentTermCount > 0)
+		{
+			var numberOfWordsInParentTerm = parentTerm.split(" ").length;
+			if (numberOfWordsInParentTerm > 2)
+			{
+				var subTerms = getUniqueTerms(parentTerm, 2, numberOfWordsInParentTerm - 1);
+				for (var j = 0; j < subTerms.length; ++j)
+				{
+					var subTerm = subTerms[j];
+					if (subTerm in termCounts)
+					{
+						var subTermCount = termCounts[subTerm].positiveCount + termCounts[subTerm].negativeCount;
+						if (parentTermCount / subTermCount > TERM_SIGNIFICANCE_THRESHOLD)
+						{
+							termCounts[subTerm].positiveCount = 0
+							termCounts[subTerm].negativeCount = 0
+						}
+					}
+				}
+			}
 		}
 	}
 	
-	consolidateSimilarWords(wordCounts);
+	// Sort the multi-word terms by their frequency
+	multiWordTerms.sort(function(a, b)
+	{
+		aCounts = termCounts[a];
+		bCounts = termCounts[b];
+		return ((bCounts.positiveCount + bCounts.negativeCount) - (aCounts.positiveCount + aCounts.negativeCount));
+	});
 	
-	showReviewCloud(wordCounts);
+	multiWordTerms = multiWordTerms.slice(0, MAXIMUM_NUMBER_OF_TERMS_IN_CLOUD);
+	var significantTermsRegularExpression = new RegExp('\\b\\s*(' + multiWordTerms.join('|') + ')\\s*\\b', 'g');
+	
+	for (var i = 0; i < g_reviews.length; ++i)
+	{
+		var review = g_reviews[i];
+		review.text = review.text.replace(significantTermsRegularExpression, '');
+
+		var uniqueTermsInThisReview = getUniqueTerms(review.text, 1, 1);
+		
+		// Go over the set of unique terms in this review and increment their counts in the "termCounts" array.
+		for (var j = 0; j < uniqueTermsInThisReview.length; ++j)
+		{
+			var term = uniqueTermsInThisReview[j];
+			if (term in termCounts == false)
+			{
+				termCounts[term] = { negativeCount: 0, positiveCount: 0 };
+			}
+			
+			if (review.isPositive)
+			{
+				termCounts[term].positiveCount++;
+			}
+			else
+			{
+				termCounts[term].negativeCount++;
+			}
+		}
+	}
+	
+	for (var term in termCounts)
+	{
+		// Push all terms which occur more than once into the sortedTerms array.
+		if ((termCounts[term].positiveCount + termCounts[term].negativeCount) <= 1)
+		{
+			delete termCounts[term];
+		}
+		else if (shouldBeFiltered(term))
+		{
+			delete termCounts[term];
+		}
+	}
+	
+	consolidateHyphenatedTerms(termCounts);
+	
+	consolidateSingularAndPluralForms(termCounts);
+	
+	showReviewCloud(termCounts);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// consolidateSimilarWords: This function takes words which are similar (e.g.
-// "zombie" and "zombies") and merges them together in order to give them more
-// accurate representation within the ReviewCloud.
+// sanitizeText: This function transforms text received from Steam so that it
+// is ready for processing.
 //
 ////////////////////////////////////////////////////////////////////////////////
-function consolidateSimilarWords(wordCounts)
+function sanitizeText(text)
 {
-	logInfo("Consolidating similar words...");
+	// Steam censors swears in reviews by replacing them with hearts, which can ♥♥♥♥ up the analysis. Get rid of them!
+	text = text.replace(/(\u2665\w*)/g, '');
+
+	// Change the text to lowercase.
+	text = text.toLowerCase();
+	
+	// Replace apostrophe-like characters with apostrophes.
+	text = text.replace(/[‘’´]/g, '\'');
+	
+	// Replace quotation mark-like characters with quotation marks.
+	text = text.replace(/[“”]/g, '\"');
+	
+	// Replace hyphen-like characters with hyphens.
+	text = text.replace(/[–—‒―]/g, '-');
+
+	return text;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// getUniqueTerms: This function takes a string and a minimum and maximum term
+// length and extracts the unique set of terms from that text. A term is
+// defined as one or more words, separated by spaces.
+//
+////////////////////////////////////////////////////////////////////////////////
+function getUniqueTerms(text, minimumTermLength, maximumTermLength)
+{
+	var clauses = text.match(/([a-z0-9](?:[\\\/][0-9]|[\'\-][a-z0-9]|[a-z0-9\ ])*)/gi);
+
+	// If there were no clauses in our review text...
+	if (clauses === null)
+	{
+		return [];
+	}
+		
+	var uniqueTermsSet = {};
+	
+	for (var i = 0; i < clauses.length; ++i)
+	{
+		var clause = clauses[i].trim();
+
+		var wordsInClause = clause.split(' ');
+
+		// For all the words in the clause, generate a set of terms.
+		for (var j = 0; j < wordsInClause.length; ++j)
+		{
+			var term = "";
+			
+			for (var k = 0; k < maximumTermLength && j + k < wordsInClause.length; ++k)
+			{
+				term += (k == 0 ? "" : " ") + wordsInClause[j + k];
+				if (k + 1 >= minimumTermLength)
+				{
+					if (!(term in uniqueTermsSet))
+					{
+						uniqueTermsSet[term] = true;
+					}
+				}
+			}
+		}
+	}
+	
+	var uniqueTerms = [];
+	for (var term in uniqueTermsSet)
+	{
+		uniqueTerms.push(term);
+	}
+	
+	return uniqueTerms;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// consolidateSingularAndPluralForms: This function combines the singular and 
+// plural forms of terms in order to give these terms a more accurate
+// representation within the ReviewCloud.
+//
+////////////////////////////////////////////////////////////////////////////////
+function consolidateSingularAndPluralForms(termCounts)
+{
+	logInfo("Consolidating singular terms with their plural forms...");
 	
 	// This is a very rudimentary, naive approach to detecting pluralization.
 	// A more robust approach can be found at http://www.csse.monash.edu.au/~damian/papers/HTML/Plurals.html	
 	var pluralizationSchemeSchemes =
 	[
 		{ regex: /^(.*?)s$/, singularEndings: [''] }, // Dogs, etc.
+		{ regex: /^(.*?)sses$/, singularEndings: ['ss', 's'] }, // Messes, gasses, etc.
 		{ regex: /^(.*?)ies$/, singularEndings: ['y', 'ie'] }, // Puppies, zombies, etc.
 		{ regex: /^(.*?)shes$/, singularEndings: ['sh'] }, // Bushes, etc.
 		{ regex: /^(.*?)ches$/, singularEndings: ['ch'] }, // Churches, etc.
@@ -569,13 +764,13 @@ function consolidateSimilarWords(wordCounts)
 		{ regex: /^(.*?)ves$/, singularEndings: ['ve', 'f'] } // Objectives, wolves, etc.
 	]
 			
-	for (var word in wordCounts)
+	for (var word in termCounts)
 	{
-		// If the word ends with 's'...
-		if (/s$/.test(word))
+		// If the term ends with 's', and the final word in the term is at least four letters long...
+		if (/\w{3,}s$/.test(word))
 		{
 			var pluralForm = word;
-						
+			
 			var foundSingularForm = false;
 			for (var i = 0; i < pluralizationSchemeSchemes.length && !foundSingularForm; ++i)
 			{
@@ -588,33 +783,88 @@ function consolidateSimilarWords(wordCounts)
 						var singularEnding = pluralizationScheme.singularEndings[j];
 						var singularForm = prefix[1] + singularEnding;
 
-						if (singularForm in wordCounts)
+						if (singularForm in termCounts)
 						{
 							foundSingularForm = true;
 							
-							var singularTotalCount = wordCounts[singularForm].positiveCount + wordCounts[singularForm].negativeCount;
-							var pluralTotalCount = wordCounts[pluralForm].positiveCount + wordCounts[pluralForm].negativeCount;
+							var singularTotalCount = termCounts[singularForm].positiveCount + termCounts[singularForm].negativeCount;
+							var pluralTotalCount = termCounts[pluralForm].positiveCount + termCounts[pluralForm].negativeCount;
 							
 							if (pluralTotalCount >= singularTotalCount)
 							{
 								logInfo("Merging \"" + singularForm + "\" (" + singularTotalCount + ") into \"" + pluralForm + "\" (" + pluralTotalCount + ").");
 								
-								wordCounts[pluralForm].positiveCount += wordCounts[singularForm].positiveCount;
-								wordCounts[pluralForm].negativeCount += wordCounts[singularForm].negativeCount;
+								termCounts[pluralForm].positiveCount += termCounts[singularForm].positiveCount;
+								termCounts[pluralForm].negativeCount += termCounts[singularForm].negativeCount;
 								
-								delete wordCounts[singularForm];
+								delete termCounts[singularForm];
 							}
 							else
 							{
 								logInfo("Merging \"" + pluralForm + "\" (" + pluralTotalCount + ") into \"" + singularForm + "\" (" + singularTotalCount + ").");
 								
-								wordCounts[singularForm].positiveCount += wordCounts[pluralForm].positiveCount;
-								wordCounts[singularForm].negativeCount += wordCounts[pluralForm].negativeCount;
+								termCounts[singularForm].positiveCount += termCounts[pluralForm].positiveCount;
+								termCounts[singularForm].negativeCount += termCounts[pluralForm].negativeCount;
 								
-								delete wordCounts[pluralForm];
+								delete termCounts[pluralForm];
 							}
 						}
 					}
+				}
+			}
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// consolidateHyphenatedTerms: This function combines hyphenated terms with
+// their non-hyphenated equivalents (e.g. "first-person" with "first person")
+// in order to give these terms more accurate representation within the
+// ReviewCloud.
+//
+////////////////////////////////////////////////////////////////////////////////
+function consolidateHyphenatedTerms(termCounts)
+{
+	logInfo("Consolidating hyphenated terms...");
+	
+	for (var term in termCounts)
+	{
+		// If this term contains a hyphen...
+		if (/\w-\w/g.test(term))
+		{
+			var hyphenatedTerm = term;
+			var nonHyphenatedTerm = hyphenatedTerm.replace(/-/, '');
+			var nonHyphenatedTermWithSpace = hyphenatedTerm.replace(/-/, ' ');
+			
+			var alternateForms = [hyphenatedTerm, nonHyphenatedTerm, nonHyphenatedTermWithSpace];
+			
+			// Sort by ascending frequency
+			alternateForms.sort(function(a,b)
+			{
+				if (a in termCounts && b in termCounts)
+				{
+					var aCount = termCounts[a].positiveCount + termCounts[a].negativeCount;
+					var bCount = termCounts[b].positiveCount + termCounts[b].negativeCount;
+					return (aCount - bCount);
+				}
+				
+				return (a in termCounts ? 1 : -1);
+			});
+			
+			var mostCommonForm = alternateForms.pop();
+			
+			logInfo("Combining \"" + alternateForms.join("\", \"") + "\" with \"" + mostCommonForm + "\".");
+
+			for (var i = 0; i < alternateForms.length; ++i)
+			{
+				var lessCommonForm = alternateForms[i];
+				
+				if (lessCommonForm in termCounts)
+				{
+					termCounts[mostCommonForm].positiveCount += termCounts[lessCommonForm].positiveCount;
+					termCounts[mostCommonForm].negativeCount += termCounts[lessCommonForm].negativeCount;
+					delete termCounts[lessCommonForm];
 				}
 			}
 		}
@@ -715,80 +965,42 @@ function extractReviewData(reviewsContainer)
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// getUniqueWords: Takes a string, and returns a list of the unique words in
-// that string.
+// shouldBeFiltered: This function takes a term as input and returns true or
+// false, indicating whether that term should be excluded from the ReviewCloud.
+// Certain terms are filtered in order to make the ReviewCloud more meaningful.
 //
 ////////////////////////////////////////////////////////////////////////////////
-function getUniqueWords(text)
+function shouldBeFiltered(term)
 {
-	// Remove any trailing "'s" on words.
-	text = text.replace(/'s/g, '');
-		
-	// Split the text on all non-word characters, except for hyphens, apostrophes, ampersands and slashes.
-	var words = text.split(/\W*[^\w-'&\\\/]+\W*|--+|[\\\/]+(?!\d)/);
-	
-	var uniqueWords = {};
-	
-	// Go over all the words in this review and find the set of unique words.
-	for (var j = 0; j < words.length; j++)
-	{
-		var word = words[j];
-		
-		if (word.length == 0)
-		{
-			continue;
-		}
-
-		if (word in uniqueWords == false)
-		{
-			uniqueWords[word] = true;
-		}
-	}
-	
-	return uniqueWords;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-//
-// shouldBeFiltered: This function takes a word as input and returns true or
-// false, indicating whether that word should be excluded from the ReviewCloud.
-// Certain words are filtered in order to make the ReviewCloud more meaningful.
-//
-////////////////////////////////////////////////////////////////////////////////
-function shouldBeFiltered(word)
-{
-	// Remove any word which contains an apostrophe (e.g. don't, can't, i've, should've) because those words aren't interesting.
-	if (/'/.test(word))
-	{
-		return true;
-	}
-
-	// Remove any words which is fewer than two letters or greater than twenty letters.
-	if (word.length < 2 || word.length > 20)
+	// Remove any terms which are less than four letters long.
+	if (term.length <= 3)
 	{
 		return true;
 	}
 	
-	// Remove any words which contain only numbers
-	if (/^\d+$/.test(word))
+	// Remove any terms which contain only numbers.
+	if (/^\d+$/.test(term))
+	{
+		return true;
+	}
+	// Don't use the word "game" or "steam" or "based".
+	if (/^(game|steam|based)$/.test(term))
 	{
 		return true;
 	}
 	
-	// Remove anything that start with "game" or "play" (because they pop up in almost every review.)
-	if (/^(game|play)/.test(word))
+	if (/^(a|about|although|an|and|as|at|because|but|by|each|for|from|her|his|however|if|in|is(n(')?t)?|are(n(')?t)?|am|was(n(')?t)?|were(n(')?t)?|it's|my|of|of course|on|play(s|ed|ing)?|some|than|that|the|their|this|through(( )?out)?|to|with(( )?out)?|your)\b/.test(term))
 	{
 		return true;
 	}
 	
-	// Filter out a variety of common English words.
-	if (/^(a|able|aboard|about|above|abroad|absolutely|according|accurately|across|act(s|ed|ing)?|action|actively|actually|add|addition|adjective|admittedly|afraid|after|afterward|again|against|ago|agreed|ah|ahead|alike|all|allegedly|allow|almost|along|alongside|alot|already|also|although|altogether|always|am|amid|among|amount|an|and|and\/or|angle|annually|another|answer|any|anybody|anymore|anyone|anything|anyway|anywhere|apart|apparently|appear|approximately|are|area|arms|around|arrived|as|aside|ask|at|atop|automatically|away|back|bad|badly|barely|basically|be|became|because|become|been|before|began|begin|behalf|behind|being|believe|belong|below|beneath|beside|besides|best|better|between|beyond|big|bill|bit|born|both|bottom|break|briefly|bring|brought|but|buy|by|call|call(s|ed|ing)?|came|can|cannot|can't|capital|captain|care|carefully|carry|case|catch|caught|cause|certain|certainly|chance|change|charge|choose|clearly|climbed|close|closely|com(e|es|ing)|come|common|commonly|compare|complete|completely|compound|concerning|conditions|consequently|consider|considerably|consistently|constantly|contain|continued|correct|correctly|cost|could|couldn't|count|country|course|covered|create|cross|crowd|current|currently|cut|daily|day(s)?|decided|deeply|definitely|deliberately|depending|describe|design|desperately|despite|details|determine|developed|did|didn't|died|difference|different|differently|direct|directly|discovered|distance|divided|division|do|does|doesn't|done|dont|don't|down|dozen|dramatically|draw|drawing|drive|dry|due|during|each|early|easily|east|easy|eat|economically|edge|effect|effectively|eight|eighth|either|electric|elements|eleven|else|elsewhere|emotionally|end|energy|enjoy|enough|entered|entire|entirely|equal|equally|equation|especially|essentially|etc|even|evening|eventually|ever|every|everybody|everyone|everything|everywhere|exactly|example|except|excepting|exclusively|exercise|expect|explain|express|extremely|fairly|fall|false|famous|far|fast|favor|feel(s)?|feeling|fell|felt|few|fewer|fifteen|fifth|fifty|filled|finally|find|fine|finished|firmly|first|fit|five|flat|flow|follow|for|force|forever|form|former|formerly|forth|fortunately|forty|forward|found|four|fourth|frankly|freely|frequently|fresh|from|front|full|fully|furthermore|gave|general|generally|gently|get(s|ting)?|got|giv(e|es|ing)|gave|go(es|ing)?|gone|good|gradually|greatly|grew|ground|group|grow|guess|ha|half|halfway|halt|happened|happily|happy|hardly|hav(e|ing)|has|had|he|hear(s|d)?|heavily|heavy|held|hello|help(s|ed|ing)?|hence|her|here|hers|herself|hey|hi|high|highly|him|himself|his|historically|hit|hold|honestly|hopefully|hours|how|however|huge|huh|hundred|i|idea|ie|if|i'll|immediately|important|importantly|in|includ(e|es|ed|ing)|increas(e|es|ed|ing)|increasingly|incredibly|indeed|indicat(e|es|ed|ing)|inevitably|information|initially|inside|instantly|instead|interest|into|ironically|is|isn't|it|its|it's|itself|joined|jumped|just|keep|kept|killed|kind|kinda|know|knowing|knew|known|large|largely|last|late|lately|later|latter|lay|lead|learn(s|ed|ing)?|least|leav(e|es|ing)|left|led|legally|length|less|let(s)?|let's|lifted|lightly|like|likely|likewise|listen(s|ed|ing)?|literally|little|live|located|long|look(s|ed|ing)?|lot|lots|loud|low|main|mainly|major|mak(e|es|ing)|made|manag(e|es|ed|ing)|many|march|mark|match|matter|may|maybe|me|mean|meanwhile|measure|meet|melody|members|mentally|merely|method|middle|might|million|mind|mine|minute(s)?|miss|moment|month(s)?|more|moreover|most|mostly|move|much|must|my|myself|near|nearby|nearly|necessarily|necessary|need(s|ing|ed)?|neither|never|nevertheless|new|newly|next|nine|ninth|no|nobody|none|nonetheless|nor|normally|not|note|nothing|notice|noun|now|nowhere|number|object|observ(e|es|ing|ed)|obviously|occasionally|o'clock|of|off|officially|often|oh|ok|okay|old|on|once|one(s)?|one-third|only|onto|open|openly|opposed|opposite|or|order|originally|other|others|otherwise|our|ours|ourselves|out|outside|over|overall|overnight|own|pair|part|partially|particular|particularly|particulary|partly|passed|pay|people|per|perfectly|perhaps|personally|physically|pick(s|ed|ing)?|picked|place(s)?|play|please|plenty|plus|pm|point|politically|position|possible|possibly|potentially|pounds|practically|practice|precisely|prepared|presumably|previously|primarily|printed|prior|privately|probably|produce|properly|property|provid(e|es|ing|ed)|public|publicly|pulled|pushed|put|quickly|quiet|quietly|quite|raised|ran|rapidly|rarely|rather|re|reached|read|readily|ready|really|received|recently|record|regard|regarding|regardless|regularly|relatively|remain|remember|repeated|repeatedly|report|reportedly|represent|resent|respect|respectively|response|rest|return|review(s|ing|ed|er)?|rich|ride|right|rise|rolled|roughly|round|routinely|row|rule|run|safe|safely|said|sail|same|sat|save|saw|say|scale|second|second(s)?|section|see|seeds|seem|seemingly|seen|seldom|sell|send|sense|sent|sentence|separate|seriously|serve|set|settled|seven|seventh|several|severely|shall|sharp|sharply|she|shop|short|shortly|should|shoulder|shouted|show|shown|side|sight|sign|signal|significantly|silent|similar|similarly|simple|simply|simultaneously|since|sing|sir|sit|six|sixth|size|sleep|slightly|slowly|small|smell|smil(e|es|ed|ing)|so|socially|soft|softly|solely|solution|some|somebody|someday|somehow|someone|something|sometime|sometimes|somewhat|somewhere|soon|south|speak(s|ing)|spoke|special|specifically|spell|spite|spot|spread|spring|stand|stars|start|state|stay|steadily|steel|step|stick|still|stood|stop|straight|strange|stream|stretched|strictly|strong|strongly|study|stuff|substantially|successfully|such|sudden|suddenly|suggest(s|ed|ing)?|sum|suppose|supposedly|sure|surely|surprisingly|syllables|system|tak(e|es|ing)|tak(e|es|ing)|took|talk(s|ed|ing)?|tall|tell|ten|tenth|terms|terribly|than|that|the|their|theirs|them|themselves|then|there(s)?|thereby|therefore|these|they|thick|thin|thing(s)?|think|third|thirty|this|thoroughly|those|though|thought|thousand(s)?|three|through|throughout|thus|tied|tight|tightly|till|time|tiny|to|together|told|tone|tonight|too|took|top|total|totally|touch|toward|towards|tr(y|ies|ied|ing)|traditionally|travel|trip|trouble|true|truly|twelve|twentieth|twenty|twice|two|type|typically|uh|ultimately|under|underneath|understand|unfortunately|unless|unlike|until|unto|up|upon|us|us(e|es|ed|ing)?|usually|value|various|versus|very|via|view|virtually|visit(s|ed|ing)?|vs|wait(s|ed|ing)?|walk(s|ed|ing)?|wall|want|warm|was|wash(es|ed|ing)?|wasn't|watch|way|way(s)?|we|wear|week(s)?|well|we'll|went|were|west|what|whatever|when|whenever|where|whereas|wherever|whether|which|whichever|while|white|who|whoever|whole|whom|whomever|whose|why|wide|widely|wild|will|win|wish(es|ing|ed)?|with|within|without|wonder|wont|won't|work|worth|would|wouldn't|wow|writ(e|es|ing)|wrote|written|wrong|yeah|year(s)?|yes|yet|you|young|your|youre|you're|yours|yourself|yourselves|zero|)$/g.test(word))
+	if (/\b((be)?c(ome|omes|ame|oming)|(dis)?lik(e|es|ed|ing)|'(s|ll|t|ve|m|re)|(un)?lock(s|ed|ing)|(un)?lock(s|ed|ing)?|a|a( )?lot|able|about|above|absolutely|across|act(s|ed)?|actual|actually|add(s|ed|ing)?|addition|after|again|against|ago|all|allow(s|ed|ing)?|almost|along|already|also|although|always|am|amount|an|and|another|any|anyone|anything|anyway|around|as|aside|at|attack(ed|ing)|avoid(s|ed|ing)?|away|b(uy|uys|ought|uying)|b(uys|ought|uying)|back|basically|battl(ed|ing)|be(en|ing)?|beat(s|ing)?|because|before|behind|believ(e|es|ed|ing)|better|between|beyond|biggest|bit|both|bought|br(ing|ings|ought)|break|buil(d|ds|t|ding)|bunch|but|by|c(an(('|no)?t)?|ould(n(')?t)?)|c(ome|omes|ame|ing)|call(s|ed|ing)?|car(e|es|ed|ing)|caus(e|es|ed|ing)|certain|certainly|chang(e|es|ed|ing)|check(s|ed|ing)?|cho(ose|oses|se|osing)|clear(s|ed|ing)?|click(s|ed|ing)?|clos(e|es|ed|ing)|collect(s|ed|ing)?|compar(e|es|ed|ing)|complet(e|es|ed|ing)|completely|cons|consider(s|ed|ing)?|constantly|content|continu(e|es|ed|ing)|control(led|ling)?|couple|creat(e|es|ed|ing)|current|currently|cut(s|ting)?|d(o(es)?(n(')?t)?|id(n(')?t)?|oing)|decid(e|es|ed|ing)|definitely|depend(s|ed|ing)?|depth|despite|different|done|down|drop(s|ped|ping)?|due|during|each|early|easier|easily|edit|either|else|end|enjoy(s|ed|ing)?|enough|entire|entirely|equip(s|ed|ping)?|especially|etc|even|eventually|ever|every|exactly|except|expect(s|ed|ing)?|extra|extremely|f(all|alls|ell|alling)|f(ight|ights|ought|ighting)|f(ind|inds|ound|inding)|fair|fairly|far|fe(el|els|lt|eling)|feature|few|figure|finally|finish(es|ed|ing)?|fir(ed|ing)|first|fix(es|ed|ing)?|focus|follow(s|ed|ing)?|for|forc(ed|ing)|form|forward|from|full|fully|further|g(et|ets|ot|etting)|g(ive|ives|ave|iving)|given|go(es|ing)?|went|guess(es|ed|ing)?|happen(s|ed|ing)?|have(n(')?t)?|having|had(n(')?t)?|has(n(')?t)?|he|hear(s|d)?|help(s|ed|ing)?|her|here|higher|highly|him|his|hit|hold|honestly|hop(e|es|ed|ing)|how|however|i|idea|if|im|in|in( )?fact|including|incredibly|inspire(s|d)?|instead|interested|into|is(n(')?t)?|are(n(')?t)?|am|was(n(')?t)?|were(n(')?t)?|issue|its|it's|jump(s|ed|ing)?|just|ke(ep|eps|pt|eping)|kind|kinda|kn(ow|ows|ew|owing)|lack(s|ed|ing)?|last|later|le(ave|aves|ft|aving)|learn(s|ed|ing)?|least|less|let|lets|lik(e|es|ed|ing)|likely|literally|lived|longer|look(s|ed|ing)?|los(e|es|t|ing)|lot|lots|lov(e|es|ed|ing)|low|m(ay|ight)|ma(ke|kes|de|king)|main|major|many|match|matter|maybe|me|mean(s|t|ing)?|mention(s|ed|ing)?|mind(s|ed|ing)?|minor|miss|missing|mix|more|most|mostly|mov(e|es|ed|ing)|much|multiple|must|my|myself|near|nearly|need(s|ed|ing)?|negative|never|new|next|no|none|not|note|nothing|now|number|of|off|offer|offers|often|oh|ok|okay|on|once|one|ones|only|open(s|ed|ing)?|option|or|order(s|ed|ing)?|other|others|otherwise|our|out|over|overall|own(s|ed|ing)?|pa(y|ys|id|ying)|pass|perfect(ed|ing)|perfectly|perhaps|personal|personally|pick(s|ed|ing)?|play(s|ed|ing)?|plenty|plus|point(ed|ing)|possible|previous|probably|pros|purchas(e|es|ed|ing)|put(ting)?|quickly|quite|r(un|uns|an|unning)|range|rather|rating|reach|read(s|ing)?|real|really|recommend(s|ed|ing)?|regret(s|ted|ting)?|releas(e|es|ed|ing)|remember(s|ed|ing)?|remind(s|ed|ing)?|replay(s|ed|ing)?|requir(e|es|ed|ing)|rest|right|s(ee|ees|aw|een|eeing)|sa(y|ys|id|ying)|sadly|same|sav(e|es|ed|ing)|second|seem(s|ed|ing)?|sens(e|es|ed|ing)|seriously|set|several|sh(oot|oots|ot|ooting)|should(n(')?t)?|show|shows|side|similar|simply|since|single|slightly|so|solve|some|someone|something|sometimes|somewhat|soon|sort|sounds|spen(d|ds|t|ding)|st(and|ands|ood|anding)|st(uck|ing)|start(s|ed|ing)?|stay(s|ed|ing)?|steam|still|stop(s|ed|ping)?|such|suggest|super|support(s|ed|ing)?|suppos(e|es|ed|ing)|sure|t(ake|akes|ook|aking)|t(ell|els|old|elling)|th(ink|inks|ought|inking)|than|thank(s|ed|ing)?|that|thats|the|their|them|themselves|then|there|these|they|thing|things|third|this|those|though|through|throughout|times|title|titles|to|together|tons|too|total|totally|towards|tr(y|ies|ied|ying)|truly|turn|turned|turns|u(se|ses|sed|sing)|under|underst(and|ands|ood|anding)|unfortunately|unless|unlike|until|up|upon|us(e|es|ed|ing)|usually|various|very|view|w(ill|on(')?t|ould(n(')?t)?)|w(in|ins|on|inning)|wait(s|ed|ing)?|walk(s|ed|ing)?|want(s|ed|ing)?|wast(e|es|ed|ing)|watch(es|ed|ing)?|we|well|went|what|whatever|when|where|whether|which|while|who|whole|why|wish(es|ed|ing)?|with(out)?|within|work(s|ed|ing)?|worse|worth|would|yeah|year|yes|yet|you|your|yourself)$/.test(term))
 	{
 		return true;
 	}
 
 	// Remove any mentions of the game's name
-	if (getAppNameAsRegExp().test(word))
+	if (getAppNameAsRegExp().test(term))
 	{
 		getAppNameAsRegExp().lastIndex = 0;
 		return true;
@@ -803,53 +1015,50 @@ function shouldBeFiltered(word)
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// showReviewCloud: Displays a ReviewCloud generated from the provided word
+// showReviewCloud: Displays a ReviewCloud generated from the provided term
 // counts.
 //
 ////////////////////////////////////////////////////////////////////////////////
-function showReviewCloud(wordCounts)
+function showReviewCloud(termCounts)
 {
-	var cloudWordList = new Array();
+	var cloudWordList = [];
 	
-	for (var word in wordCounts)
+	for (var term in termCounts)
 	{
-		var positiveCount = wordCounts[word].positiveCount;
-		var negativeCount = wordCounts[word].negativeCount;
+		var numberOfWordsInTerm = term.split(" ").length;
+		var positiveCount = termCounts[term].positiveCount;
+		var negativeCount = termCounts[term].negativeCount;
 		var totalCount = positiveCount + negativeCount;
+		if (totalCount <= 0)
+		{
+			continue;
+		}
+		
+		var totalWeight = Math.pow(totalCount, 1 + (Math.log10(numberOfWordsInTerm) * MULTI_TERM_WEIGHTING));
+		if (totalWeight <= 0)
+		{
+			continue;
+		}
 		
 		var positivePercentage = (positiveCount / totalCount);
-		if (positivePercentage > 0.5)
-		{
-			var hue = POSITIVE_WORD_HUE;
-			var saturation = positivePercentage;
-		}
-		else
-		{
-			var hue = NEGATIVE_WORD_HUE;
-			var saturation = (1.0 - positivePercentage);
-		}
+		var hue = (positivePercentage > 0.5 ? POSITIVE_TERM_HUE : NEGATIVE_TERM_HUE);
+		var saturation = (positivePercentage > 0.5 ? positivePercentage : (1.0 - positivePercentage)) * MAXIMUM_TERM_SATURATION;
 		
-		saturation = saturation * MAXIMUM_WORD_SATURATION;
-		
-		cloudWordList.push({text: word, weight: totalCount, hue: hue, saturation: saturation});
+		cloudWordList.push({text: term, weight: totalWeight, hue: hue, saturation: saturation});
 	}
 
 	// Sort in descending order of frequency
 	cloudWordList.sort(function(a,b)
 	{
-		if (a.weight == b.weight)
-		{
-			return 0;
-		}
-
-		return (a.weight > b.weight ? -1 : 1);
+		return b.weight - a.weight;
 	});
 
-	cloudWordList = cloudWordList.slice(0, MAXIMUM_NUMBER_OF_WORDS_IN_CLOUD);
-	
+	cloudWordList = cloudWordList.slice(0, MAXIMUM_NUMBER_OF_TERMS_IN_CLOUD);
+
 	for (var i = 0; i < cloudWordList.length; ++i)
 	{
 		logInfo(cloudWordList[i].text + " (" + cloudWordList[i].weight + ")");
+		cloudWordList[i].weight = (Math.log(cloudWordList[i].weight) / Math.log(LOG_BASE)) + 1;
 	}
 		
 	hideLoadingOverlay();
@@ -859,8 +1068,8 @@ function showReviewCloud(wordCounts)
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// convertHSVToRGB: This function takes a (hue, saturation, value) triplet and
-// converts it into a hexadecimal representation of a (red, blue, green) color.
+// convertHSVToRGB: This function takes a (hue, saturation, value) tuple
+// and converts it into a (red, blue, green) tuple.
 //
 // Adapted from http://schinckel.net/2012/01/10/hsv-to-rgb-in-javascript/
 //
@@ -890,9 +1099,12 @@ var convertHSVToRGB = function(h, s, v)
 		}
 	}
 	
-	var hexadecimalString = rgb.map(function(x) { return ("0" + Math.round(x*255).toString(16)).slice(-2); }).join('');
-	
-	return '#' + hexadecimalString;
+	for (var i = 0; i < rgb.length; ++i)
+	{
+		rgb[i] = parseInt(rgb[i] * 255);
+	}
+
+	return rgb;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -944,8 +1156,8 @@ var convertHSVToRGB = function(h, s, v)
 	  var hitTest = function(elem, other_elems) {
 		// Pairwise overlap detection
 		var overlapping = function(a, b) {
-		  if (Math.abs(2.0*a.offsetLeft + (a.offsetWidth + PER_WORD_PADDING) - 2.0*b.offsetLeft - (b.offsetWidth + PER_WORD_PADDING)) < (a.offsetWidth + PER_WORD_PADDING) + (b.offsetWidth + PER_WORD_PADDING)) {
-			if (Math.abs(2.0*a.offsetTop + (a.offsetHeight + PER_WORD_PADDING) - 2.0*b.offsetTop - (b.offsetHeight + PER_WORD_PADDING)) < (a.offsetHeight + PER_WORD_PADDING) + (b.offsetHeight + PER_WORD_PADDING)) {
+		  if (Math.abs(2.0*a.offsetLeft + (a.offsetWidth + TERM_SPACING) - 2.0*b.offsetLeft - (b.offsetWidth + TERM_SPACING)) < (a.offsetWidth + TERM_SPACING) + (b.offsetWidth + TERM_SPACING)) {
+			if (Math.abs(2.0*a.offsetTop + (a.offsetHeight + TERM_SPACING) - 2.0*b.offsetTop - (b.offsetHeight + TERM_SPACING)) < (a.offsetHeight + TERM_SPACING) + (b.offsetHeight + TERM_SPACING)) {
 			  return true;
 			}
 		  }
@@ -1037,8 +1249,8 @@ var convertHSVToRGB = function(h, s, v)
 
 		$this.append(word_span);
 
-		var width = word_span.width(),
-			height = word_span.height(),
+		var width = word_span.width() + (TERM_PADDING * 2),
+			height = word_span.height() + (TERM_PADDING * 2),
 			left = options.center.x - width / 2.0,
 			top = options.center.y - height / 2.0;
 
@@ -1052,8 +1264,10 @@ var convertHSVToRGB = function(h, s, v)
 
 		if (word.hue)
 		{
-			var value = MINIMUM_WORD_VALUE + ((1.0 - MINIMUM_WORD_VALUE) * (weight/10));
-			word_style.color = convertHSVToRGB(word.hue, word.saturation, value);
+			var value = MINIMUM_TERM_VALUE + ((1.0 - MINIMUM_TERM_VALUE) * (weight/10));
+			var rgb = convertHSVToRGB(word.hue, word.saturation, value);
+			word_style.color = "rgb(" + rgb.join(",") + ")";
+			word_style.background = "rgba(" + rgb.join(",") + "," + TERM_BACKGROUND_ALPHA + ")";
 		}
 
 		while(hitTest(word_span[0], already_placed_words)) {
@@ -1106,12 +1320,12 @@ var convertHSVToRGB = function(h, s, v)
 	  var drawOneWordDelayed = function(index) {
 		index = index || 0;
 		if (!$this.is(':visible')) { // if not visible then do not attempt to draw
-		  setTimeout(function(){drawOneWordDelayed(index);},PER_WORD_DELAY_TIME);
+		  setTimeout(function(){drawOneWordDelayed(index);}, PER_TERM_DELAY_TIME);
 		  return;
 		}
 		if (index < word_array.length) {
 		  drawOneWord(index, word_array[index]);
-		  setTimeout(function(){drawOneWordDelayed(index + 1);}, PER_WORD_DELAY_TIME);
+		  setTimeout(function(){drawOneWordDelayed(index + 1);}, PER_TERM_DELAY_TIME);
 		} else {
 		  if ($.isFunction(options.afterCloudRender)) {
 			options.afterCloudRender.call($this);
@@ -1132,7 +1346,7 @@ var convertHSVToRGB = function(h, s, v)
 	};
 
 	// Delay execution so that the browser can render the page before the computatively intensive word cloud drawing
-	setTimeout(function(){drawWordCloud();}, PER_WORD_DELAY_TIME);
+	setTimeout(function(){drawWordCloud();}, PER_TERM_DELAY_TIME);
 	return $this;
   };
 })(jQuery);
@@ -1140,7 +1354,7 @@ var convertHSVToRGB = function(h, s, v)
 GM_addStyle('div.jqcloud { font-size: ' + DEFAULT_FONT_SIZE + 'px;  line-height: normal; }');
 GM_addStyle('div.jqcloud a { font-size: inherit;  text-decoration: none; }');
 GM_addStyle('div.jqcloud { overflow: hidden;  position: relative; }');
-GM_addStyle('div.jqcloud span { padding: 0; }');
+GM_addStyle('div.jqcloud span { padding: ' + TERM_PADDING + 'px; -webkit-border-radius: ' + ROUNDED_CORNER_RADIUS + 'px; border-radius: ' + ROUNDED_CORNER_RADIUS + 'px; -moz-border-radius: ' + ROUNDED_CORNER_RADIUS + 'px; white-space: nowrap; }');
 
 for (var i = 0; i < 10; ++i)
 {
